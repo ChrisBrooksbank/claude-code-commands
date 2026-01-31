@@ -7,6 +7,7 @@ Custom slash commands for [Claude Code](https://docs.anthropic.com/en/docs/claud
 | Command | Description |
 |---------|-------------|
 | `/cb-new-project` | Scaffold a TypeScript project with LLM guardrails (ESLint, Prettier, Husky, Knip, Vitest, CI) |
+| `/cb-ralph-wiggum` | Scaffold Ralph Wiggum autonomous AI development loop with JTBD specs and bash iteration |
 
 ## Installation
 
@@ -24,7 +25,8 @@ Then restart Claude Code or start a new session.
 
 ## Usage
 
-In Claude Code, type `/cb-new-project` to scaffold a new TypeScript project with quality guardrails.
+- `/cb-new-project` - Scaffold a new TypeScript project with quality guardrails
+- `/cb-ralph-wiggum` - Set up autonomous AI development with fresh-context bash loop
 
 ## License
 

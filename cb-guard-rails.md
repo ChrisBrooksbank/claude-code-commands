@@ -1,7 +1,7 @@
 ---
 name: cb-guard-rails
 author: ChrisBrooksbank
-description: Add guard rails to existing projects - detect tech stack, identify missing tools, and add linting, formatting, pre-commit hooks, testing, and CI.
+description: Add guard rails to existing projects - detect tech stack, identify missing tools, and add linting, formatting, pre-commit hooks, testing, visual regression & interaction testing (Playwright), and CI.
 ---
 
 This skill retrofits existing projects with "guard rails" - tools that create tight feedback loops to catch errors early. Unlike scaffolding a new project, this detects what's already in place and only adds what's missing.
@@ -16,6 +16,7 @@ This skill retrofits existing projects with "guard rails" - tools that create ti
 | Type checking | Type errors, null issues |
 | Testing | Behavioral regressions |
 | Dead code detection | Unused exports, dependencies, files |
+| Visual & interaction testing | Visual regressions, broken UI, non-functional interactivity |
 | CI | Issues missed locally |
 
 ## When to Use
@@ -92,6 +93,7 @@ Check for existing configurations to avoid duplication:
 | Type check | `tsconfig.json` (for TS projects) |
 | Testing | `vitest.config.*`, `jest.config.*`, `*.test.ts` files |
 | Dead code | `knip.json`, `knip.config.*` |
+| Visual/interaction testing | `playwright.config.*`, `e2e/`, `tests/e2e/`, `*.spec.ts` with Playwright imports |
 | CI | `.github/workflows/*.yml` |
 
 **Python:**
@@ -147,6 +149,7 @@ Let user choose which missing tools to add. Present options like:
 - Type checking (already have/mypy)
 - Testing framework (Vitest/pytest/built-in)
 - Dead code detection (Knip - JS/TS only)
+- Visual & interaction testing (Playwright - web projects only)
 - CI workflow (GitHub Actions)
 
 ### 3. Configuration Preferences (if applicable)
@@ -492,6 +495,217 @@ import '@testing-library/jest-dom/vitest';
 }
 ```
 
+#### Playwright (Visual & Interaction Testing)
+
+**Only add when the project is a website** - i.e. has a `dev` or `start` script that serves HTML, uses a web framework (React, Next.js, Vue, Svelte, Angular), or has an `index.html` entry point. Skip for pure libraries, CLIs, or API-only backends.
+
+**playwright.config.ts:**
+```typescript
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+    testDir: './e2e',
+    fullyParallel: true,
+    forbidOnly: !!process.env.CI,
+    retries: process.env.CI ? 2 : 0,
+    workers: process.env.CI ? 1 : undefined,
+    reporter: process.env.CI ? 'github' : 'html',
+    use: {
+        baseURL: process.env.BASE_URL || 'http://localhost:3000',
+        trace: 'on-first-retry',
+        screenshot: 'only-on-failure',
+    },
+    projects: [
+        {
+            name: 'chromium',
+            use: { ...devices['Desktop Chrome'] },
+        },
+        {
+            name: 'firefox',
+            use: { ...devices['Desktop Firefox'] },
+        },
+        {
+            name: 'webkit',
+            use: { ...devices['Desktop Safari'] },
+        },
+    ],
+    webServer: {
+        command: 'npm run dev',
+        url: 'http://localhost:3000',
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+    },
+});
+```
+
+**For Next.js projects, adjust `webServer`:**
+```typescript
+webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+},
+```
+
+**For Vite projects, adjust `webServer` and `baseURL`:**
+```typescript
+use: {
+    baseURL: process.env.BASE_URL || 'http://localhost:5173',
+},
+webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:5173',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+},
+```
+
+**e2e/visual.spec.ts (Visual Regression Baseline):**
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('Visual regression', () => {
+    test('homepage matches screenshot', async ({ page }) => {
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+        await expect(page).toHaveScreenshot('homepage.png', {
+            fullPage: true,
+            maxDiffPixelRatio: 0.01,
+        });
+    });
+
+    // Add additional pages/routes as needed:
+    // test('about page matches screenshot', async ({ page }) => {
+    //     await page.goto('/about');
+    //     await page.waitForLoadState('networkidle');
+    //     await expect(page).toHaveScreenshot('about.png', {
+    //         fullPage: true,
+    //         maxDiffPixelRatio: 0.01,
+    //     });
+    // });
+});
+```
+
+**e2e/interaction.spec.ts (Interaction Smoke Tests):**
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('Core interactions', () => {
+    test('page loads and is interactive', async ({ page }) => {
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+
+        // Verify the page has a title
+        await expect(page).toHaveTitle(/.+/);
+
+        // Verify main content is visible
+        const body = page.locator('body');
+        await expect(body).toBeVisible();
+    });
+
+    test('navigation links work', async ({ page }) => {
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+
+        // Find all navigation links and verify they respond to clicks
+        const navLinks = page.locator('nav a, header a');
+        const linkCount = await navLinks.count();
+
+        if (linkCount > 0) {
+            // Click first nav link and verify navigation occurs
+            const firstLink = navLinks.first();
+            const href = await firstLink.getAttribute('href');
+            if (href && !href.startsWith('http') && !href.startsWith('#')) {
+                await firstLink.click();
+                await page.waitForLoadState('networkidle');
+                // Verify we navigated (URL changed or content loaded)
+                await expect(page.locator('body')).toBeVisible();
+            }
+        }
+    });
+
+    test('buttons are clickable and respond', async ({ page }) => {
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+
+        const buttons = page.locator('button:visible');
+        const buttonCount = await buttons.count();
+
+        if (buttonCount > 0) {
+            // Verify first visible button is enabled and clickable
+            const firstButton = buttons.first();
+            await expect(firstButton).toBeEnabled();
+        }
+    });
+
+    test('no console errors on page load', async ({ page }) => {
+        const errors: string[] = [];
+        page.on('console', msg => {
+            if (msg.type() === 'error') {
+                errors.push(msg.text());
+            }
+        });
+
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+
+        expect(errors).toEqual([]);
+    });
+
+    test('no accessibility violations in tab order', async ({ page }) => {
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+
+        // Verify keyboard navigation works - Tab through interactive elements
+        await page.keyboard.press('Tab');
+        const focusedElement = page.locator(':focus');
+        // At least one element should be focusable
+        await expect(focusedElement).toBeVisible();
+    });
+});
+```
+
+**Notes on visual regression workflow:**
+- First run creates baseline screenshots in `e2e/visual.spec.ts-snapshots/`
+- **Baseline snapshots MUST be committed to git** so CI can compare against them
+- To update baselines after intentional UI changes: `npx playwright test --update-snapshots`
+- `maxDiffPixelRatio: 0.01` allows 1% pixel variance to handle anti-aliasing differences across environments
+- The interaction tests are smoke tests - instruct the user to expand them with project-specific flows (forms, modals, auth, etc.)
+
+**package.json scripts:**
+```json
+{
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:update-snapshots": "playwright test --update-snapshots"
+  }
+}
+```
+
+**Required devDependencies:**
+```json
+{
+  "@playwright/test": "^1.48.0"
+}
+```
+
+**Setup commands:**
+```bash
+npx playwright install --with-deps
+```
+
+**.gitignore additions:**
+```
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+```
+
+**Do NOT gitignore** the snapshot directories (`e2e/**/*-snapshots/`) - these baselines must be committed.
+
 #### GitHub Actions CI
 
 **.github/workflows/ci.yml:**
@@ -536,6 +750,35 @@ jobs:
 
       - name: Security audit
         run: npm audit --audit-level=high
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: npm run test:e2e
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
 ```
 
 **For pnpm projects:**
@@ -582,7 +825,43 @@ jobs:
 
       - name: Run tests
         run: pnpm test:run
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: pnpm test:e2e
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
 ```
+
+**Note:** Only include the `e2e` job when the project is a website with Playwright configured. Omit it for libraries, CLIs, and API-only backends.
 
 ---
 
@@ -1086,6 +1365,11 @@ npm run lint
 npm run format:check
 npm run typecheck
 npm test
+
+# If Playwright was added (web projects only):
+npx playwright install --with-deps
+npm run test:e2e  # first run creates baseline screenshots
+# Commit the snapshot baselines: git add e2e/**/*-snapshots/
 ```
 
 ### Python
@@ -1153,7 +1437,8 @@ cargo test
    - Add .prettierrc.json + .prettierignore
    - Add Husky + lint-staged
    - Add knip.json
-   - Add .github/workflows/ci.yml (if missing)
+   - Add Playwright config + baseline visual/interaction tests (website detected)
+   - Add .github/workflows/ci.yml (if missing, includes e2e job for websites)
 
 5. **Post-setup**: Provide commands to run
 
@@ -1165,4 +1450,6 @@ cargo test
 - **Respect existing patterns**: If project uses tabs, keep tabs. If uses 2 spaces, keep 2 spaces.
 - **Framework-aware**: Use framework-specific configs when applicable
 - **Minimal changes**: Only add what's explicitly requested and confirmed by user
+- **Website detection**: Only add Playwright when the project builds/serves a website (has `dev`/`start` script, web framework, or `index.html`). Never add it for pure libraries, CLIs, or API-only backends.
+- **Snapshot baselines**: When Playwright visual tests are added, the first run creates baseline screenshots. These MUST be committed to git. Instruct the user to run `npx playwright test --update-snapshots` after intentional UI changes.
 - **Test after setup**: Always verify the guard rails work before finishing
